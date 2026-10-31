@@ -16,7 +16,7 @@ import {
 } from '../controllers/adminController.js';
 import { toggleFeatured } from '../controllers/productController.js';
 import { protect, authorize } from '../middleware/authMiddleware.js';
-
+import { getNextInvoiceNumber } from '../controllers/invoiceController.js';
 const router = express.Router();
 
 // All routes in this router are protected and require admin role
@@ -47,5 +47,8 @@ router.put('/orders/:id/status', adminUpdateOrderStatus);
 
 // Bulk CSV upload
 router.post('/products/bulk-upload', adminBulkUploadProducts);
+
+// Invoice number generator
+router.post('/invoices/next-number', getNextInvoiceNumber);
 
 export default router;
