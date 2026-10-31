@@ -11,12 +11,8 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { buildInvoicePdf, calcTotals, formatINR } from '../../utils/generateInvoicePdf';
-import {
-  loadShopDetails,
-  saveShopDetails,
-  getSuggestedInvoiceNo,
-  markInvoiceDownloaded,
-} from '../../utils/invoiceShopDetails';
+import { loadShopDetails, saveShopDetails } from '../../utils/invoiceShopDetails';
+import api from '../../services/api';
 
 const inputCls =
   'w-full p-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs focus:outline-none focus:border-amber-500';
@@ -37,7 +33,6 @@ const SHOP_FIELDS = [
   ['stateName', 'State Name'],
   ['stateCode', 'State Code'],
   ['placeOfSupply', 'Place of Supply'],
-  ['invoicePrefix', 'Invoice Prefix'],
 ];
 
 const GST_OPTIONS = [0, 5, 12, 18, 28];
@@ -46,7 +41,7 @@ const blankItem = () => ({ description: '', hsn: '', qty: 1, rate: '' });
 const today = () => new Date().toISOString().slice(0, 10);
 
 const newInvoice = () => ({
-  invoiceNo: getSuggestedInvoiceNo(),
+  invoiceNo: '', // Download dabane par backend se aayega
   date: today(),
   customer: { name: '', phone: '', address: '', gstin: '' },
   items: [blankItem()],
@@ -59,6 +54,7 @@ const InvoiceGeneratorPage = () => {
   const [showShop, setShowShop] = useState(false);
   const [message, setMessage] = useState('');
   const [invoice, setInvoice] = useState(newInvoice);
+  const [downloading, setDownloading] = useState(false);
 
   const flash = (text) => {
     setMessage(text);
@@ -98,19 +94,24 @@ const InvoiceGeneratorPage = () => {
   });
   const totals = calcTotals(pdfItems, half, half);
 
-  const buildDoc = () => {
+  // Validate karo (number abhi consume nahi hota)
+  const validate = () => {
     if (!invoice.customer.name.trim()) {
       alert('Customer ka naam daalo');
-      return null;
+      return false;
     }
     if (validItems.length === 0) {
       alert('Kam se kam ek product daalo');
-      return null;
+      return false;
     }
-    return buildInvoicePdf({
+    return true;
+  };
+
+  const buildDoc = (invoiceNo) =>
+    buildInvoicePdf({
       shop,
       invoice: {
-        invoiceNo: invoice.invoiceNo,
+        invoiceNo,
         date: invoice.date,
         client: {
           ...invoice.customer,
@@ -122,18 +123,37 @@ const InvoiceGeneratorPage = () => {
         sgstRate: half,
       },
     });
-  };
 
+  // Preview me number kharch nahi hota, isliye placeholder dikhta hai
   const handlePreview = () => {
-    const doc = buildDoc();
+    if (!validate()) return;
+    const doc = buildDoc(invoice.invoiceNo || 'INV-XXXX-PREVIEW');
     if (doc) window.open(doc.output('bloburl'), '_blank');
   };
 
-  const handleDownload = () => {
-    const doc = buildDoc();
-    if (!doc) return;
-    doc.save(`Invoice-${invoice.invoiceNo || 'draft'}.pdf`);
-    markInvoiceDownloaded(invoice.invoiceNo);
+  const handleDownload = async () => {
+    if (!validate() || downloading) return;
+    setDownloading(true);
+    try {
+      // Is invoice ka number pehle mil chuka hai to wahi use karo, warna backend se naya lo
+      let invoiceNo = invoice.invoiceNo;
+      if (!invoiceNo) {
+        const res = await api.post('/admin/invoices/next-number');
+        invoiceNo = res.data?.data?.invoiceNo;
+        if (!invoiceNo) throw new Error('Invoice number nahi mila');
+        setInvoice((inv) => ({ ...inv, invoiceNo }));
+      }
+
+      const doc = buildDoc(invoiceNo);
+      if (doc) {
+        doc.save(`Invoice-${invoiceNo}.pdf`);
+        flash(`${invoiceNo} download ho gaya`);
+      }
+    } catch (err) {
+      alert(err.message || 'Invoice number nahi ban paya. Dobara try karo.');
+    } finally {
+      setDownloading(false);
+    }
   };
 
   return (
@@ -141,7 +161,7 @@ const InvoiceGeneratorPage = () => {
       <div>
         <h1 className="text-2xl font-black text-white tracking-tight">Invoice Generator</h1>
         <p className="text-xs text-slate-400">
-          Customer aur product bharo, PDF download karo. Invoice ka data save nahi hota.
+          Customer aur product bharo, PDF download karo. Invoice ka data save nahi hota, sirf number yaad rehta hai.
         </p>
       </div>
 
@@ -165,8 +185,13 @@ const InvoiceGeneratorPage = () => {
           <Field label="Customer GSTIN (agar ho)">
             <input className={inputCls} value={invoice.customer.gstin} onChange={(e) => setCustomer('gstin', e.target.value.toUpperCase())} />
           </Field>
-          <Field label="Invoice No.">
-            <input className={inputCls} value={invoice.invoiceNo} onChange={(e) => setInvoice({ ...invoice, invoiceNo: e.target.value })} />
+          <Field label="Invoice No. (auto)">
+            <input
+              readOnly
+              className={`${inputCls} opacity-70 cursor-not-allowed`}
+              value={invoice.invoiceNo}
+              placeholder="Download dabane par apne aap banega"
+            />
           </Field>
           <Field label="Date">
             <input type="date" className={inputCls} value={invoice.date} onChange={(e) => setInvoice({ ...invoice, date: e.target.value })} />
@@ -276,10 +301,11 @@ const InvoiceGeneratorPage = () => {
         <button
           type="button"
           onClick={handleDownload}
-          className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl flex items-center gap-2"
+          disabled={downloading}
+          className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 font-black text-xs rounded-xl flex items-center gap-2"
         >
           <Download className="w-4 h-4" />
-          Download PDF
+          {downloading ? 'Please wait...' : 'Download PDF'}
         </button>
         <button
           type="button"
