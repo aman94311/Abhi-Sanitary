@@ -146,7 +146,7 @@ const Footer = () => {
 
       {/* Disclaimer from mockup */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-3 text-center text-[10px] text-slate-600 tracking-wider uppercase">
-        Online Storefront & Inventory Management System for Physical Shop
+        A little creativity, a lot of love — Made by Aman Shukla.
       </div>
     </footer>
   );
