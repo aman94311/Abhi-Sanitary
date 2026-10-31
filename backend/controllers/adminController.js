@@ -180,8 +180,6 @@ export const adminGetProducts = async (req, res, next) => {
 // @desc    Admin: Create product
 // @route   POST /api/admin/products
 // @access  Private/Admin
-// @access  Private/Admin
-// @access  Private/Admin
 export const adminCreateProduct = async (req, res, next) => {
   try {
     const productData = req.body;
@@ -454,66 +452,160 @@ export const adminBulkUploadProducts = async (req, res, next) => {
       failedRows: [],
     };
 
-    const validProducts = [];
+    const toSlug = s =>
+      String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+    const DEFAULT_IMG = 'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?q=80&w=800';
+    const dbReady = mongoose.connection.readyState === 1;
+
+    // ---------- Step 1: har row ko validate aur clean karo ----------
+    const cleaned = [];
+    const seenSkus = new Set();
 
     for (let i = 0; i < products.length; i++) {
       const row = products[i];
       const rowNum = i + 1;
+      const fail = reason =>
+        results.failedRows.push({ row: rowNum, sku: row.sku || 'N/A', reason });
 
       if (!row.name || !row.sku || !row.regularPrice || !row.categorySlug) {
-        results.failedRows.push({
-          row: rowNum,
-          sku: row.sku || 'N/A',
-          reason: 'Missing required field: name, sku, regularPrice, or categorySlug',
-        });
+        fail('Missing required field: name, sku, regularPrice, or categorySlug');
         continue;
       }
 
-      // Check duplicates
-      const exists = validProducts.some(p => p.sku === row.sku) || memoryProducts.some(p => p.sku === row.sku);
-      if (exists) {
-        results.failedRows.push({
-          row: rowNum,
-          sku: row.sku,
-          reason: `Duplicate SKU '${row.sku}' found`,
-        });
+      const catSlug = String(row.categorySlug).trim().toLowerCase();
+      if (!['paints', 'sanitary'].includes(catSlug)) {
+        fail(`categorySlug must be "paints" or "sanitary" (got "${row.categorySlug}")`);
         continue;
       }
 
-      const slug = row.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+      const regularPrice = Number(row.regularPrice);
+      const discountPrice = Number(row.discountPrice) || 0;
+      if (!Number.isFinite(regularPrice) || regularPrice <= 0) {
+        fail('regularPrice must be a number greater than 0');
+        continue;
+      }
+      if (discountPrice < 0 || discountPrice > regularPrice) {
+        fail('discountPrice must be between 0 and regularPrice');
+        continue;
+      }
 
-      validProducts.push({
-        _id: 'prod_' + Date.now() + '_' + i,
-        name: row.name,
-        slug,
-        categorySlug: row.categorySlug.toLowerCase(),
-        subcategory: row.subcategory || 'General',
-        subcategorySlug: (row.subcategory || 'General').toLowerCase().replace(/\s+/g, '-'),
-        brand: row.brand || 'Generic',
+      const sku = String(row.sku).trim().toUpperCase();
+      if (seenSkus.has(sku)) {
+        fail(`Duplicate SKU '${sku}' inside the CSV`);
+        continue;
+      }
+      seenSkus.add(sku);
+
+      const stock = Number(row.stockQuantity);
+      const subcategory = (row.subcategory || 'General').trim();
+
+      cleaned.push({
+        rowNum,
+        name: String(row.name).trim(),
+        slug: toSlug(row.name),
+        categorySlug: catSlug,
+        subcategory,
+        subcategorySlug: toSlug(subcategory),
+        brand: (row.brand || 'Generic').trim(),
         description: row.description || `Quality ${row.name} for home and construction.`,
-        images: [{ url: row.imageUrl || 'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?q=80&w=800', isPrimary: true }],
-        regularPrice: Number(row.regularPrice),
-        discountPrice: Number(row.discountPrice) || 0,
-        stockQuantity: Number(row.stockQuantity) || 10,
-        sku: row.sku.toUpperCase(),
+        images: [{ url: row.imageUrl || DEFAULT_IMG, isPrimary: true }],
+        regularPrice,
+        discountPrice,
+        stockQuantity: Number.isFinite(stock) && stock >= 0 ? stock : 0,
+        sku,
         hasVariants: false,
         isActive: true,
-        ratingsAverage: 4.5,
-        ratingsCount: 1,
-        createdAt: new Date(),
       });
     }
 
-    if (validProducts.length > 0) {
-      if (mongoose.connection.readyState === 1) {
-        await Product.insertMany(validProducts);
-      } else {
-        memoryProducts.unshift(...validProducts);
+    // ---------- Step 2: Offline (memory) mode ----------
+    if (!dbReady) {
+      for (const p of cleaned) {
+        if (memoryProducts.some(m => m.sku === p.sku)) {
+          results.failedRows.push({ row: p.rowNum, sku: p.sku, reason: `Duplicate SKU '${p.sku}' found` });
+          continue;
+        }
+        const { rowNum, ...data } = p;
+        memoryProducts.unshift({
+          ...data,
+          _id: 'prod_' + Date.now() + '_' + rowNum,
+          ratingsAverage: 0,
+          ratingsCount: 0,
+          createdAt: new Date(),
+        });
+        results.importedCount++;
       }
-      results.importedCount = validProducts.length;
+
+      return res.status(200).json({
+        success: true,
+        message: `Import completed: ${results.importedCount} products added, ${results.failedRows.length} rows failed.`,
+        summary: results,
+      });
     }
 
-    res.status(200).json({
+    // ---------- Step 3: Database mode ----------
+
+    // Database me pehle se maujood SKU aur slug ek hi query me nikaalo
+    const existing = await Product.find({
+      $or: [
+        { sku: { $in: cleaned.map(p => p.sku) } },
+        { slug: { $in: cleaned.map(p => p.slug) } },
+      ],
+    }).select('sku slug');
+    const usedSkus = new Set(existing.map(p => p.sku));
+    const usedSlugs = new Set(existing.map(p => p.slug));
+
+    // Category cache: "paints" / "sanitary" ka document ek baar dhoondo, na mile to bana do
+    const categoryCache = new Map();
+    const getCategoryId = async catSlug => {
+      if (categoryCache.has(catSlug)) return categoryCache.get(catSlug);
+
+      let doc = await Category.findOne({ slug: catSlug });
+      if (!doc) {
+        doc = await Category.create({
+          name: catSlug.charAt(0).toUpperCase() + catSlug.slice(1),
+          slug: catSlug,
+        });
+      }
+      categoryCache.set(catSlug, doc._id);
+      return doc._id;
+    };
+
+    // Ek-ek row save karo, taaki ek fail ho to baaki ruk na jayein
+    for (const p of cleaned) {
+      try {
+        if (usedSkus.has(p.sku)) {
+          results.failedRows.push({
+            row: p.rowNum,
+            sku: p.sku,
+            reason: `Duplicate SKU '${p.sku}' already exists in database`,
+          });
+          continue;
+        }
+
+        // Slug unique rakhna hai: same naam ho to sku jod do
+        let slug = p.slug;
+        if (usedSlugs.has(slug)) slug = `${slug}-${toSlug(p.sku)}`;
+        if (usedSlugs.has(slug)) slug = `${slug}-${Date.now().toString(36)}`;
+
+        const category = await getCategoryId(p.categorySlug);
+        const { rowNum, ...data } = p;
+
+        await Product.create({ ...data, slug, category });
+
+        usedSkus.add(p.sku);
+        usedSlugs.add(slug);
+        results.importedCount++;
+      } catch (err) {
+        results.failedRows.push({
+          row: p.rowNum,
+          sku: p.sku,
+          reason: err.message || 'Could not save this product',
+        });
+      }
+    }
+
+    return res.status(200).json({
       success: true,
       message: `Import completed: ${results.importedCount} products added, ${results.failedRows.length} rows failed.`,
       summary: results,
@@ -522,6 +614,7 @@ export const adminBulkUploadProducts = async (req, res, next) => {
     next(error);
   }
 };
+
 // @desc    Admin: Get all quotations
 // @route   GET /api/admin/quotations
 // @access  Private/Admin
@@ -561,7 +654,6 @@ export const adminUpdateQuotation = async (req, res, next) => {
     next(error);
   }
 };
-
 
 // @desc    Admin: Download full order history as CSV
 // @route   GET /api/admin/orders/export
