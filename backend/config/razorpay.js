@@ -1,24 +1,17 @@
 import Razorpay from 'razorpay';
-import dotenv from 'dotenv';
-dotenv.config();
 
-const keyId = process.env.RAZORPAY_KEY_ID;
-const keySecret = process.env.RAZORPAY_KEY_SECRET;
+let instance = null;
 
-let razorpayInstance = null;
-
-if (keyId && keySecret && keyId !== 'your_razorpay_key_id_here') {
-  try {
-    razorpayInstance = new Razorpay({
-      key_id: keyId,
-      key_secret: keySecret,
-    });
-    console.log('[Razorpay] Initialized with live/test API keys');
-  } catch (err) {
-    console.warn('[Razorpay] Initialization warning:', err.message);
+// Lazy create: dotenv load hone ke baad hi keys padhi jaati hain
+export const getRazorpay = () => {
+  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+    throw new Error('Razorpay keys are missing in .env');
   }
-} else {
-  console.log('[Razorpay] Running in simulated test mode (replace RAZORPAY_KEY_ID & SECRET in .env for production)');
-}
-
-export default razorpayInstance;
+  if (!instance) {
+    instance = new Razorpay({
+      key_id: process.env.RAZORPAY_KEY_ID,
+      key_secret: process.env.RAZORPAY_KEY_SECRET,
+    });
+  }
+  return instance;
+};

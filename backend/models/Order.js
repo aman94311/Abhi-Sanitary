@@ -83,8 +83,9 @@ const orderSchema = new mongoose.Schema(
       default: 'Pending',
     },
     razorpayOrderId: {
-      type: String,
-      default: '',
+    type: String,
+    default: '',
+    index: true,
     },
     razorpayPaymentId: {
       type: String,

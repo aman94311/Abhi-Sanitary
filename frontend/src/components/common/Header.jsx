@@ -47,7 +47,8 @@ const Header = () => {
         try {
           const res = await api.get(`/products/search/suggestions?q=${encodeURIComponent(searchQuery)}`);
           if (res.data?.success) {
-            setSuggestions(res.data.suggestions);
+            // FIX 1: hamesha array hi set karo
+            setSuggestions(Array.isArray(res.data.suggestions) ? res.data.suggestions : []);
             setShowSuggestions(true);
           }
         } catch {
@@ -222,7 +223,8 @@ const Header = () => {
                     </div>
                     <div className="text-right">
                       <p className="text-xs font-bold text-slate-900">
-                        ₹{(item.discountPrice || item.regularPrice).toLocaleString('en-IN')}
+                        {/* FIX 2: price undefined ho to bhi crash nahi */}
+                        ₹{Number(item.discountPrice || item.regularPrice || 0).toLocaleString('en-IN')}
                       </p>
                     </div>
                   </Link>

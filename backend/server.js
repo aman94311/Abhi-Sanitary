@@ -4,14 +4,15 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
-import quotationRoutes from './routes/quotationRoutes.js';
 import mongoose from 'mongoose';
-import orderRoutes from './routes/orderRoutes.js';
 import connectDB from './config/db.js';
+import quotationRoutes from './routes/quotationRoutes.js';
+import orderRoutes from './routes/orderRoutes.js';
 import categoryRoutes from './routes/categoryRoutes.js';
 import productRoutes from './routes/productRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
+import { razorpayWebhook } from './controllers/orderController.js';
 import { notFound, errorHandler } from './middleware/errorHandler.js';
 
 // Load environment variables
@@ -39,7 +40,6 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, callback) => {
-      // allow requests with no origin (like mobile apps, curl, or postman)
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
@@ -50,13 +50,19 @@ app.use(
   })
 );
 
+// Razorpay webhook: RAW body chahiye, isliye express.json() se PEHLE
+app.post(
+  '/api/orders/razorpay/webhook',
+  express.raw({ type: 'application/json' }),
+  razorpayWebhook
+);
+
 // Request body parser
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use('/api/orders', orderRoutes);
+
 // Cookie parser for secure JWT cookies
 app.use(cookieParser());
-app.use('/api/quotations', quotationRoutes);
 
 // Development logging
 if (process.env.NODE_ENV !== 'production') {
@@ -78,6 +84,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/products', productRoutes);
+app.use('/api/orders', orderRoutes);
+app.use('/api/quotations', quotationRoutes);
 
 // Error Handling Middlewares
 app.use(notFound);

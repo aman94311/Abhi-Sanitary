@@ -9,7 +9,14 @@
     "dev": "nodemon server.js",
     "seed": "node utils/seedData.js"
   },
-  "keywords": ["mern", "ecommerce", "paints", "sanitary", "express", "mongodb"],
+  "keywords": [
+    "mern",
+    "ecommerce",
+    "paints",
+    "sanitary",
+    "express",
+    "mongodb"
+  ],
   "author": "Antigravity",
   "license": "ISC",
   "dependencies": {
@@ -22,7 +29,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.9.5",
     "morgan": "^1.10.0",
-    "razorpay": "^2.9.5"
+    "razorpay": "^2.9.8"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"

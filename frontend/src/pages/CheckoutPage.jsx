@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Truck, ShieldCheck, Banknote } from 'lucide-react';
+import { Truck, ShieldCheck, Banknote, CreditCard } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
@@ -8,6 +8,16 @@ import api from '../services/api';
 const inputCls =
   'w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-brand-500';
 const labelCls = 'block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2';
+
+const loadRazorpayScript = () =>
+  new Promise(resolve => {
+    if (window.Razorpay) return resolve(true);
+    const s = document.createElement('script');
+    s.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    s.onload = () => resolve(true);
+    s.onerror = () => resolve(false);
+    document.body.appendChild(s);
+  });
 
 const CheckoutPage = () => {
   const { cart, cartSubtotal, cartCount, clearCart, shopSettings } = useShop();
@@ -27,6 +37,7 @@ const CheckoutPage = () => {
     pincode: '',
     notes: '',
   });
+  const [paymentMethod, setPaymentMethod] = useState('COD'); // 'COD' | 'ONLINE'
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -61,6 +72,74 @@ const CheckoutPage = () => {
   const deliveryCharge = cartSubtotal >= freeThreshold ? 0 : shopSettings.deliveryCharge || 99;
   const estimatedTotal = cartSubtotal + deliveryCharge;
 
+  const finishOrder = orderId => {
+    placedRef.current = true;
+    clearCart();
+    navigate(`/order-success/${orderId}`, { replace: true });
+  };
+
+  const placeCOD = async payload => {
+    const res = await api.post('/orders', payload);
+    if (res.data?.success) finishOrder(res.data.data._id);
+  };
+
+  const payOnline = async payload => {
+    const loaded = await loadRazorpayScript();
+    if (!loaded) {
+      throw new Error('Could not load payment gateway. Check your internet and try again.');
+    }
+
+    // Step 1: backend order + Razorpay order banata hai
+    const res = await api.post('/orders/razorpay/create', payload);
+    const { order, razorpayOrderId, amount, currency, keyId } = res.data.data;
+
+    // Step 2: Razorpay popup
+    const rzp = new window.Razorpay({
+      key: keyId,
+      amount,
+      currency,
+      order_id: razorpayOrderId,
+      name: 'Abhi Sanitary & Paints',
+      description: `Order ${order.orderNumber}`,
+      prefill: {
+        name: form.fullName,
+        email: user?.email || '',
+        contact: form.phone,
+      },
+      theme: { color: '#2563eb' },
+      handler: async response => {
+        // Step 3: payment ho gaya -> backend signature verify karega
+        try {
+          await api.post('/orders/razorpay/verify', {
+            orderId: order._id,
+            razorpay_order_id: response.razorpay_order_id,
+            razorpay_payment_id: response.razorpay_payment_id,
+            razorpay_signature: response.razorpay_signature,
+          });
+          finishOrder(order._id);
+        } catch (err) {
+          setError(
+            err.message ||
+              'Payment verification failed. If money was deducted, please contact the store.'
+          );
+          setSubmitting(false);
+        }
+      },
+      modal: {
+        ondismiss: () => {
+          setError('Payment cancelled. You can try again or choose Cash on Delivery.');
+          setSubmitting(false);
+        },
+      },
+    });
+
+    rzp.on('payment.failed', r => {
+      setError(r.error?.description || 'Payment failed. Please try again.');
+    });
+
+    rzp.open();
+  };
+
   const handleSubmit = async e => {
     e.preventDefault();
     setError('');
@@ -77,15 +156,15 @@ const CheckoutPage = () => {
         notes,
       };
 
-      const res = await api.post('/orders', payload);
-      if (res.data?.success) {
-        placedRef.current = true;
-        clearCart();
-        navigate(`/order-success/${res.data.data._id}`, { replace: true });
+      if (paymentMethod === 'COD') {
+        await placeCOD(payload);
+      } else {
+        await payOnline(payload);
+        // submitting tab tak true rahega jab tak payment/verify/dismiss na ho
+        return;
       }
     } catch (err) {
       setError(err.message || 'Could not place order. Please try again.');
-    } finally {
       setSubmitting(false);
     }
   };
@@ -93,6 +172,13 @@ const CheckoutPage = () => {
   if (loading || !isAuthenticated) {
     return <div className="max-w-3xl mx-auto p-12 text-center text-sm text-slate-500">Loading...</div>;
   }
+
+  const optionCls = active =>
+    `flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer text-sm font-semibold transition-all ${
+      active
+        ? 'border-brand-600 bg-brand-50 text-slate-900'
+        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+    }`;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
@@ -194,8 +280,37 @@ const CheckoutPage = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 font-semibold">
-            <Banknote className="w-4 h-4" /> Cash on Delivery (pay when you receive)
+          {/* Payment method */}
+          <div className="space-y-2">
+            <p className={labelCls}>Payment Method</p>
+            <label className={optionCls(paymentMethod === 'COD')}>
+              <input
+                type="radio"
+                name="paymentMethod"
+                className="accent-brand-600"
+                checked={paymentMethod === 'COD'}
+                onChange={() => setPaymentMethod('COD')}
+              />
+              <Banknote className="w-4 h-4 text-emerald-600" />
+              <span>
+                Cash on Delivery
+                <span className="block text-[11px] font-normal text-slate-500">Pay when you receive</span>
+              </span>
+            </label>
+            <label className={optionCls(paymentMethod === 'ONLINE')}>
+              <input
+                type="radio"
+                name="paymentMethod"
+                className="accent-brand-600"
+                checked={paymentMethod === 'ONLINE'}
+                onChange={() => setPaymentMethod('ONLINE')}
+              />
+              <CreditCard className="w-4 h-4 text-brand-600" />
+              <span>
+                Pay Online
+                <span className="block text-[11px] font-normal text-slate-500">UPI, Cards, Netbanking, Wallets</span>
+              </span>
+            </label>
           </div>
 
           {error && <p className="text-xs text-rose-600 font-semibold">{error}</p>}
@@ -205,7 +320,13 @@ const CheckoutPage = () => {
             disabled={submitting}
             className="w-full py-3.5 bg-brand-600 hover:bg-brand-500 disabled:opacity-60 text-white rounded-xl font-bold text-sm shadow-lg shadow-brand-600/25 transition-all"
           >
-            {submitting ? 'Placing order...' : 'Place Order'}
+            {submitting
+              ? paymentMethod === 'COD'
+                ? 'Placing order...'
+                : 'Processing payment...'
+              : paymentMethod === 'COD'
+              ? 'Place Order'
+              : `Pay ₹${estimatedTotal.toLocaleString('en-IN')}`}
           </button>
 
           <p className="flex items-center justify-center gap-1.5 text-[11px] text-slate-500">
