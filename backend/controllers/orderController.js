@@ -135,7 +135,7 @@ const prepareOrder = async body => {
   const freeThreshold = Number(process.env.FREE_DELIVERY_THRESHOLD ?? 999);
 
   const subtotal = orderItems.reduce((s, i) => s + i.total, 0);
-  const deliveryCharge = freeThreshold > 0 && subtotal >= freeThreshold ? 0 : deliveryFee;
+  const deliveryCharge = freeThreshold > 99 && subtotal >= freeThreshold ? 0 : deliveryFee;
   const finalAmount = subtotal + deliveryCharge;
 
   const address = {

@@ -73,7 +73,7 @@ function App() {
                       <Route path="/cart" element={<CartPage />} />
                       <Route path="/checkout" element={<CheckoutPage />} />
                       <Route path="/order-success/:id" element={<OrderSuccessPage />} />
-                      <Route path="/wishlist" element={<WishlistPage />} />
+                      <Route path="/wishlist" element={<WishlistPage />} /> 
                       <Route path="/quote" element={<QuoteRequestPage />} />
                       <Route path="/login" element={<LoginPage defaultTab="login" />} />
                       <Route path="/signup" element={<LoginPage defaultTab="signup" />} />
